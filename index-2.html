@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Tetris — דפדפן</title>
+  <style>
+    :root { --bg:#0b0f14; --fg:#e7f0ff; --grid:#1e293b; --accent:#38bdf8; }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    .wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px;height:100%}
+    h1{font-size:18px;margin:6px 0 0;opacity:.9}
+    .hud{display:flex;gap:14px;align-items:center;justify-content:center}
+    .badge{background:#0e1726;border:1px solid #243244;border-radius:10px;padding:6px 10px;min-width:80px;text-align:center}
+    canvas{background:#0a1220;border:2px solid #22324a;border-radius:8px;touch-action:none}
+    .controls{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;width:100%;max-width:520px;margin-top:auto}
+    .btn{background:#0e1726;border:1px solid #334155;color:var(--fg);padding:12px 8px;border-radius:12px;font-weight:600;font-size:14px;touch-action:manipulation}
+    .btn:active{transform:scale(0.98)}
+    .row{display:flex;gap:8px;width:100%;max-width:520px}
+    .row .btn{flex:1}
+    .hint{opacity:.7;font-size:12px}
+    @media (min-width: 700px){ h1{font-size:20px} .btn{font-size:15px} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>טטריס — גרסת דפדפן</h1>
+    <div class="hud">
+      <div class="badge">ניקוד: <span id="score">0</span></div>
+      <div class="badge">שורות: <span id="lines">0</span></div>
+      <button id="pauseBtn" class="btn" style="min-width:90px">השהה</button>
+    </div>
+    <canvas id="game" width="300" height="600" aria-label="לוח המשחק" role="img"></canvas>
+    <div class="hint">מחשב: חצים ו-SPACE לדרופ. נייד: הכפתורים למטה.</div>
+
+    <div class="controls">
+      <button class="btn" data-act="left">⬅️ שמאלה</button>
+      <button class="btn" data-act="rotateL">⟲ סיבוב שמאלה</button>
+      <button class="btn" data-act="rotateR">⟳ סיבוב ימינה</button>
+      <button class="btn" data-act="right">ימינה ➡️</button>
+      <button class="btn" data-act="soft">⬇️ למטה</button>
+    </div>
+    <div class="row">
+      <button class="btn" data-act="drop">🚀 דרופ</button>
+      <button class="btn" id="restart">🔄 אתחול</button>
+    </div>
+  </div>
+
+  <script>
+  // --- Config ---
+  const COLS=10, ROWS=20, BLOCK=30; // canvas 300x600
+  const COLORS={
+    I:'#06b6d4', J:'#3b82f6', L:'#f59e0b', O:'#eab308', S:'#10b981', T:'#a855f7', Z:'#ef4444',
+    ghost:'#334155', grid:'#233247'
+  };
+  const SHAPES={
+    I:[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+    J:[[1,0,0],[1,1,1],[0,0,0]],
+    L:[[0,0,1],[1,1,1],[0,0,0]],
+    O:[[1,1],[1,1]],
+    S:[[0,1,1],[1,1,0],[0,0,0]],
+    T:[[0,1,0],[1,1,1],[0,0,0]],
+    Z:[[1,1,0],[0,1,1],[0,0,0]]
+  };
+  const PIECES=Object.keys(SHAPES);
+
+  const cvs=document.getElementById('game');
+  const ctx=cvs.getContext('2d');
+  ctx.imageSmoothingEnabled=false;
+
+  let grid, piece, nextBag=[], score=0, lines=0, dropInterval=800, lastTime=0, acc=0, paused=false, gameOver=false;
+
+  function emptyGrid(){return Array.from({length:ROWS},()=>Array(COLS).fill(null));}
+  function newBag(){const bag=[...PIECES];for(let i=bag.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;[bag[i],bag[j]]=[bag[j],bag[i]]}return bag;}
+  function spawn(){if(nextBag.length===0) nextBag=newBag();const type=nextBag.pop();const shape=SHAPES[type].map(r=>r.slice());const color=COLORS[type];return {x: Math.floor(COLS/2)-Math.ceil(shape[0].length/2), y: -getTopOffset(shape), m: shape, c: color, t: type};}
+  function getTopOffset(m){for(let y=0;y<m.length;y++) if(m[y].some(v=>v)) return y; return 0;}
+  function rotate(m, dir){const N=m.length; const res=Array.from({length:N},()=>Array(N).fill(0));for(let y=0;y<N;y++) for(let x=0;x<N;x++){ res[dir>0?x:N-1-x][dir>0?N-1-y:y]=m[y][x]; }return trimMatrix(res);}
+  function trimMatrix(m){let top=0,bottom=m.length-1,left=0,right=m[0].length-1;const rowEmpty=y=>m[y].every(v=>!v);const colEmpty=x=>m.every(r=>!r[x]);while(top<=bottom && rowEmpty(top)) top++;while(bottom>=top && rowEmpty(bottom)) bottom--;while(left<=right && colEmpty(left)) left++;while(right>=left && colEmpty(right)) right--;const h=Math.max(1,bottom-top+1), w=Math.max(1,right-left+1);return Array.from({length:h},(_,y)=>Array.from({length:w},(_,x)=>m[top+y][left+x]||0));}
+  function collide(p, gx=p.x, gy=p.y, m=p.m){for(let y=0;y<m.length;y++){for(let x=0;x<m[y].length;x++) if(m[y][x]){const X=gx+x, Y=gy+y;if(X<0||X>=COLS||Y>=ROWS) return true;if(Y>=0 && grid[Y][X]) return true;}}return false;}
+  function merge(){for(let y=0;y<piece.m.length;y++) for(let x=0;x<piece.m[y].length;x++) if(piece.m[y][x]){const X=piece.x+x, Y=piece.y+y; if(Y>=0) grid[Y][X]={c:piece.c};}}
+  function clearLines(){let cleared=0;for(let y=ROWS-1;y>=0;y--){if(grid[y].every(cell=>cell)){grid.splice(y,1);grid.unshift(Array(COLS).fill(null));cleared++;y++;}}if(cleared){lines+=cleared;score += [0,100,300,500,800][cleared] || cleared*200;dropInterval = Math.max(120, 800 - Math.floor(lines/5)*40);updateHUD();}}
+  function hardDrop(){while(!collide(piece, piece.x, piece.y+1)) piece.y++;step();}
+  function softDrop(){if(!collide(piece, piece.x, piece.y+1)) piece.y++; else step();}
+  function move(dx){ if(!collide(piece, piece.x+dx, piece.y)) piece.x+=dx; }
+  function rotatePiece(dir){const m=rotate(piece.m, dir);const kicks=[0,-1,1,-2,2];for(const k of kicks){ if(!collide(piece, piece.x+k, piece.y, m)){ piece.m=m; piece.x+=k; return; } }}
+  function ghostY(){ let y=piece.y; while(!collide(piece, piece.x, y+1)) y++; return y; }
+  function draw(){ctx.clearRect(0,0,cvs.width,cvs.height);ctx.strokeStyle=COLORS.grid; ctx.lineWidth=1;for(let y=0;y<=ROWS;y++){ ctx.beginPath(); ctx.moveTo(0,y*BLOCK); ctx.lineTo(COLS*BLOCK,y*BLOCK); ctx.stroke(); }for(let x=0;x<=COLS;x++){ ctx.beginPath(); ctx.moveTo(x*BLOCK,0); ctx.lineTo(x*BLOCK,ROWS*BLOCK); ctx.stroke(); }for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) if(grid[y][x]){drawBlock(x,y, grid[y][x].c);}const gy=ghostY();for(let y=0;y<piece.m.length;y++) for(let x=0;x<piece.m[y].length;x++) if(piece.m[y][x]){const X=piece.x+x, Y=gy+y; if(Y>=0) drawBlock(X,Y, COLORS.ghost, true);}for(let y=0;y<piece.m.length;y++) for(let x=0;x<piece.m[y].length;x++) if(piece.m[y][x]){const X=piece.x+x, Y=piece.y+y; if(Y>=0) drawBlock(X,Y, piece.c);}if(gameOver){ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(0,0,cvs.width,cvs.height);ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font='bold 24px system-ui';ctx.fillText('Game Over', cvs.width/2, cvs.height/2);}}
+  function drawBlock(x,y,color,ghost=false){const px=x*BLOCK, py=y*BLOCK;ctx.fillStyle=color; ctx.fillRect(px+1,py+1,BLOCK-2,BLOCK-2);if(!ghost){ctx.strokeStyle='rgba(255,255,255,.08)'; ctx.beginPath(); ctx.moveTo(px+2,py+BLOCK-2); ctx.lineTo(px+2,py+2); ctx.lineTo(px+BLOCK-2,py+2); ctx.stroke();ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.beginPath(); ctx.moveTo(px+BLOCK-2,py+2); ctx.lineTo(px+BLOCK-2,py+BLOCK-2); ctx.lineTo(px+2,py+BLOCK-2); ctx.stroke();}}
+  function step(){merge();clearLines();piece=spawn();if(collide(piece, piece.x, piece.y)){gameOver=true; paused=true; updateHUD();}}
+  function loop(ts){if(!paused && !gameOver){const dt=ts-lastTime; lastTime=ts; acc+=dt;while(acc>dropInterval){ acc-=dropInterval; if(!collide(piece, piece.x, piece.y+1)) piece.y++; else step(); }} else { lastTime=ts; }draw();requestAnimationFrame(loop);}
+  function updateHUD(){document.getElementById('score').textContent=score;document.getElementById('lines').textContent=lines;document.getElementById('pauseBtn').textContent = paused? 'המשך' : 'השהה';}
+  function restart(){grid=emptyGrid(); piece=spawn(); score=0; lines=0; dropInterval=800; gameOver=false; paused=false; updateHUD();}
+  window.addEventListener('keydown', (e)=>{if(paused||gameOver) return;if(e.key==='ArrowLeft') move(-1);else if(e.key==='ArrowRight') move(1);else if(e.key==='ArrowDown'){ e.preventDefault(); softDrop(); }else if(e.key==='ArrowUp') rotatePiece(1);else if(e.code==='Space'){ e.preventDefault(); hardDrop(); }}, {passive:false});
+  document.querySelectorAll('[data-act]').forEach(btn=>{const act=btn.dataset.act;let holdTimer=null, repeat=null;const tap=()=>{if(paused||gameOver) return;if(act==='left') move(-1);else if(act==='right') move(1);else if(act==='rotateL') rotatePiece(-1);else if(act==='rotateR') rotatePiece(1);else if(act==='soft') softDrop();else if(act==='drop') hardDrop();};const start=()=>{tap();if(['left','right','soft'].includes(act)){holdTimer=setTimeout(()=>{ repeat=setInterval(tap, 60); }, 200);}};const end=()=>{ clearTimeout(holdTimer); clearInterval(repeat); };btn.addEventListener('touchstart', e=>{ e.preventDefault(); start(); }, {passive:false});btn.addEventListener('touchend', end);btn.addEventListener('mousedown', start);btn.addEventListener('mouseup', end);btn.addEventListener('mouseleave', end);});
+  document.getElementById('pauseBtn').addEventListener('click', ()=>{ if(!gameOver){ paused=!paused; updateHUD(); } });
+  document.getElementById('restart').addEventListener('click', ()=> restart());
+  function fitCanvas(){const maxW=Math.min(window.innerWidth-20, 360);const scale=maxW/ (COLS*BLOCK);cvs.style.width=(COLS*BLOCK*scale)+'px';cvs.style.height=(ROWS*BLOCK*scale)+'px';}
+  window.addEventListener('resize', fitCanvas);
+  grid=emptyGrid(); piece=spawn(); fitCanvas(); updateHUD(); requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
